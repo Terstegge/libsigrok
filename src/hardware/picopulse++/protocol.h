@@ -46,102 +46,112 @@
 SR_PRIV int send_serial_str_pp(struct sr_serial_dev_inst *serial, char *str);
 SR_PRIV int send_serial_char_pp(struct sr_serial_dev_inst *serial, char ch);
 int send_serial_w_resp_pp(struct sr_serial_dev_inst *serial, char *str,
-	char *resp, size_t cnt);
+                          char *resp, size_t cnt);
 SR_PRIV int send_serial_w_ack_pp(struct sr_serial_dev_inst *serial, char *str);
 
 typedef enum rxstate {
-	RX_IDLE = 0,		/* Not receiving */
-	RX_ACTIVE = 1,		/* Receiving data */
-	RX_STOPPED = 2,		/* Received stop marker, waiting for byte cnt */
-	RX_ABORT = 3,		/* Received aborted marker or other error */
+    RX_IDLE = 0, /* Not receiving */
+    RX_ACTIVE = 1, /* Receiving data */
+    RX_STOPPED = 2, /* Received stop marker, waiting for byte cnt */
+    RX_ABORT = 3, /* Received aborted marker or other error */
 } rxstate_t;
 
 struct dev_context {
-	/* Configuration Parameters
-	 * It is up to the user to understand sample rates and serial download speed
-	 * etc and do the right thing. i.e. don't expect continuous streaming
-	 * bandwidth greater than serial link speed etc... */
-	/* The number of samples the user expects to see. */
-	uint64_t limit_samples;
-	uint64_t sample_rate;
-	/* Number of samples that have been received and processed */
-	uint32_t num_samples;
-	/* Initial Number of analog and digital channels.
-	 * This is set by initial device config. Channels can be disabled/enabled,
-	 * but can not be added/removed once driver is loaded. */
-	uint16_t num_a_channels;
-	uint16_t num_d_channels;
-	/* Masks of enabled channels based on user input */
-	uint32_t a_chan_mask;
-	uint32_t d_chan_mask;
-	/* Channel groups - each analog channel is its own group */
-	struct sr_channel_group **analog_groups;
-	struct sr_channel_group *digital_group;
-	/* Data size in bytes for each analog channel in bytes must be 1 as only
-	 * single byte samples are supported in this version */
-	uint8_t a_size;
-	/* Offset and scale for each analog channel to covert bytes to float */
-	float a_offset[MAX_ANALOG_CHANNELS];
-	float a_scale[MAX_ANALOG_CHANNELS];
-	/* % ratio of pre-trigger to post trigger samples */
-	uint64_t capture_ratio;
-	/* Total number of bytes of data sent for one sample across all channels */
-	uint16_t bytes_per_slice;
-	/* The number of bytes needed to store all channels for one sample in the
-	 * device data buffer */
-	uint32_t dig_sample_bytes;
+    /* Configuration Parameters
+     * It is up to the user to understand sample rates and serial download speed
+     * etc and do the right thing. i.e. don't expect continuous streaming
+     * bandwidth greater than serial link speed etc... */
+    /* The number of samples the user expects to see. */
+    uint64_t limit_samples;
+    uint64_t sample_rate;
+    /* Number of samples that have been received and processed */
+    uint32_t num_samples;
+    /* Initial Number of analog and digital channels.
+     * This is set by initial device config. Channels can be disabled/enabled,
+     * but can not be added/removed once driver is loaded. */
+    uint16_t num_a_channels;
+    uint16_t num_d_channels;
+    /* Masks of enabled channels based on user input */
+    uint32_t a_chan_mask;
+    uint32_t d_chan_mask;
+    /* Channel groups - each analog channel is its own group */
+    struct sr_channel_group **analog_groups;
+    struct sr_channel_group *digital_group;
+    /* Data size in bytes for each analog channel in bytes must be 1 as only
+     * single byte samples are supported in this version */
+    uint8_t a_size;
+    /* Offset and scale for each analog channel to covert bytes to float */
+    float a_offset[MAX_ANALOG_CHANNELS];
+    float a_scale[MAX_ANALOG_CHANNELS];
+    /* % ratio of pre-trigger to post trigger samples */
+    uint64_t capture_ratio;
+    /* Total number of bytes of data sent for one sample across all channels */
+    uint16_t bytes_per_slice;
+    /* The number of bytes needed to store all channels for one sample in the
+     * device data buffer */
+    uint32_t dig_sample_bytes;
 
-	/* Tracking/status once started */
-	/* Number of bytes in the current serial input stream */
-	uint32_t bytes_avail;
-	/* Samples sent to the session */
-	uint32_t sent_samples;
-	/* count total received bytes to detect lost info */
-	uint64_t byte_cnt;
-	/* For SW-based triggering we put the device into continuous transmit and
-	 * stop when we detect a sample and capture all the samples we need.
-	 * trigger_fired is thus set when the sw trigger logic detects a trigger.
-	 * For non triggered modes we send a start and a number of samples and the
-	 * device transmits that much. trigger_fired is set immediately at the
-	 * start. */
-	gboolean trigger_fired;
-	rxstate_t rxstate;
+    /* Tracking/status once started */
+    /* Number of bytes in the current serial input stream */
+    uint32_t bytes_avail;
+    /* Samples sent to the session */
+    uint32_t sent_samples;
+    /* count total received bytes to detect lost info */
+    uint64_t byte_cnt;
+    /* For SW-based triggering we put the device into continuous transmit and
+     * stop when we detect a sample and capture all the samples we need.
+     * trigger_fired is thus set when the sw trigger logic detects a trigger.
+     * For non triggered modes we send a start and a number of samples and the
+     * device transmits that much. trigger_fired is set immediately at the
+     * start. */
+    gboolean trigger_fired;
+    rxstate_t rxstate;
 
-	/* Serial Related */
-	/* Serial data buffer */
-	unsigned char *buffer;
-	/* Size of incoming serial buffer*/
-	uint32_t serial_buffer_size;
-	/* Current byte in serial read stream that is being processed */
-	uint32_t ser_rdptr;
-	/* Write pointer into the serial input buffer */
-	uint32_t wrptr;
+    /* Serial Related */
+    /* Serial data buffer */
+    unsigned char *buffer;
+    /* Size of incoming serial buffer*/
+    uint32_t serial_buffer_size;
+    /* Current byte in serial read stream that is being processed */
+    uint32_t ser_rdptr;
+    /* Write pointer into the serial input buffer */
+    uint32_t wrptr;
 
-	/* Buffering Related */
-	/* Parsed serial read data is split into each channels dedicated buffer
-	 * for analog */
-	float *a_data_bufs[MAX_ANALOG_CHANNELS];
-	/* Digital samples are stored packed together since cli/pulseview want it
-	 * that way */
-	uint8_t *d_data_buf;
-	/* Write pointer for the the per channel data buffers */
-	uint32_t cbuf_wrptr;
-	/* Size of packet data buffers for each channel */
-	uint32_t sample_buf_size;
+    /* Buffering Related */
+    /* Parsed serial read data is split into each channels dedicated buffer
+     * for analog */
+    float *a_data_bufs[MAX_ANALOG_CHANNELS];
+    /* Digital samples are stored packed together since cli/pulseview want it
+     * that way */
+    uint8_t *d_data_buf;
+    /* Write pointer for the the per channel data buffers */
+    uint32_t cbuf_wrptr;
+    /* Size of packet data buffers for each channel */
+    uint32_t sample_buf_size;
 
-	/* RLE related*/
-	/* Previous sample values to duplicate for rle */
-	float a_last[MAX_ANALOG_CHANNELS];
-	uint8_t d_last[4];
+    /* RLE related*/
+    /* Previous sample values to duplicate for rle */
+    float a_last[MAX_ANALOG_CHANNELS];
+    uint8_t d_last[4];
 
-	/* SW trigger related */
-	struct soft_trigger_logic *stl;
-	/* Maximum number of entries to store pre-trigger */
-	uint32_t pretrig_entries;
-	/* Analog pre-trigger storage for software based triggering
-	 * because sw based only has internal storage for logic */
-	float *a_pretrig_bufs[MAX_ANALOG_CHANNELS];
-	uint32_t pretrig_wr_ptr;
+    /* SW trigger related */
+    struct soft_trigger_logic *stl;
+    /* Maximum number of entries to store pre-trigger */
+    uint32_t pretrig_entries;
+    /* Analog pre-trigger storage for software based triggering
+     * because sw based only has internal storage for logic */
+    float *a_pretrig_bufs[MAX_ANALOG_CHANNELS];
+    uint32_t pretrig_wr_ptr;
+
+    /* Limits reported from RP2040 */
+    uint32_t last_queried_a_mask;
+    uint32_t last_queried_d_mask;
+    uint64_t min_samplerate;
+    uint64_t max_stream_rate;
+    uint64_t max_bulk_rate;
+    uint64_t max_bulk_samples;
+
+    gboolean is_open;
 };
 
 SR_PRIV int picopulse_receive(int fd, int revents, void *cb_data);
@@ -151,12 +161,12 @@ void process_rle_pp(struct sr_dev_inst *sdi, struct dev_context *d);
 void process_slice_pp(struct sr_dev_inst *sdi, struct dev_context *devc);
 
 int send_analog_pp(struct sr_dev_inst *sdi, struct dev_context *devc,
-	uint32_t num_samples, uint32_t offset);
+                   uint32_t num_samples, uint32_t offset);
 int send_analog_ring_pp(struct sr_dev_inst *sdi, struct dev_context *devc,
-	uint32_t num_samples);
+                        uint32_t num_samples);
 
 int process_group_pp(struct sr_dev_inst *sdi, struct dev_context *devc,
-	uint32_t num_slices);
+                     uint32_t num_slices);
 void rle_memset_pp(struct dev_context *devc, uint32_t num_slices);
 SR_PRIV int check_marker(struct dev_context *d, int *len);
 
