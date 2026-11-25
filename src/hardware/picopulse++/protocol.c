@@ -275,25 +275,24 @@ void process_slice_pp(struct sr_dev_inst *sdi, struct dev_context *devc) {
     int32_t i;
     uint32_t tmp32, cword;
     uint8_t cbyte;
-    uint32_t slice_bytes;
+    uint32_t slice_bytes = devc->bytes_avail;
 
-    for (slice_bytes = 1; (slice_bytes < devc->bytes_avail)
-                          && (devc->buffer[slice_bytes - 1] >= 0x30);
-         slice_bytes++);
-
-    if (slice_bytes != devc->bytes_avail) {
-        cbyte = devc->buffer[slice_bytes - 1];
-        slice_bytes--;
-        if (cbyte == '$') {
-            sr_info(
-                "Data stream stops with cbyte %d char %c rdidx %d sbytes %d cnt %lu",
-                cbyte, cbyte, devc->ser_rdptr, slice_bytes, devc->byte_cnt);
-            devc->rxstate = RX_STOPPED;
-        } else {
-            sr_err(
-                "Data stream aborts with cbyte %d char %c rdidx %d sbytes %d cnt %lu",
-                cbyte, cbyte, devc->ser_rdptr, slice_bytes, devc->byte_cnt);
-            devc->rxstate = RX_ABORT;
+    for (uint32_t idx = 0; idx < devc->bytes_avail; idx++) {
+        if (devc->buffer[idx] < 0x30) {
+            cbyte = devc->buffer[idx];
+            slice_bytes = idx;
+            if (cbyte == '$') {
+                sr_info(
+                    "Data stream stops with cbyte %d char %c rdidx %d sbytes %d cnt %" PRIu64,
+                    cbyte, cbyte, devc->ser_rdptr, slice_bytes, devc->byte_cnt);
+                devc->rxstate = RX_STOPPED;
+            } else {
+                sr_err(
+                    "Data stream aborts with cbyte %d char %c rdidx %d sbytes %d cnt %" PRIu64,
+                    cbyte, cbyte, devc->ser_rdptr, slice_bytes, devc->byte_cnt);
+                devc->rxstate = RX_ABORT;
+            }
+            break;
         }
     }
 
@@ -735,11 +734,10 @@ SR_PRIV int picopulse_receive(int fd, int revents, void *cb_data) {
         sr_dbg("Haven't seen complete $byte_cnt+ yet");
     }
 
-    /* If at the sample limit, send a "+" in case we are in continuous mode and
-     * need to stop the device. */
+    /* If at the sample limit, send a "+" only in continuous SW-triggered mode */
     if ((devc->sent_samples >= devc->limit_samples)
-        && (devc->rxstate == RX_ACTIVE)) {
-        sr_dbg("Ending: sent %u of limit %" PRIu64 " samples byte_cnt %" PRIu64,
+        && (devc->rxstate == RX_ACTIVE) && (devc->stl != NULL)) {
+        sr_dbg("Ending SW trigger: sent %u of limit %" PRIu64 " samples byte_cnt %" PRIu64,
                devc->sent_samples, devc->limit_samples, devc->byte_cnt);
         send_serial_char_pp(serial, '+');
         devc->rxstate = RX_IDLE;
@@ -787,13 +785,48 @@ SR_PRIV int picopulse_get_dev_cfg(const struct sr_dev_inst *sdi) {
             sr_err(
                 "ERROR: Ascale read c%d got unparseable response %s tokens %d",
                 i, response, num_tokens);
-            /* Force a legal fixed value assuming a 3.3V scale */
-            devc->a_scale[i] = 0.0257;
+            /* Force a legal fixed value assuming a 12 bit 3.3V scale */
+            devc->a_scale[i] = 3.3f / 4096.0f;
             devc->a_offset[i] = 0.0;
         }
 
         g_strfreev(tokens);
         g_free(cmd);
+    }
+
+    return SR_OK;
+}
+
+/* Read supported base sample rates from the device once during scan() */
+SR_PRIV int picopulse_get_samplerates(const struct sr_dev_inst *sdi) {
+    struct dev_context *devc = sdi->priv;
+    struct sr_serial_dev_inst *serial = sdi->conn;
+    char cmd[16], resp[32];
+    int ret;
+
+    devc->num_base_samplerates = 0;
+
+    for (size_t idx = 0; idx < MAX_SAMPLERATES; idx++) {
+        snprintf(cmd, sizeof(cmd), "r%zu\n", idx);
+        ret = send_serial_w_resp_pp(serial, cmd, resp, sizeof(resp) - 1);
+        if (ret <= 1 || resp[0] != '*') {
+            sr_err("ERROR: Invalid response for sample rate index %zu", idx);
+            return SR_ERR;
+        }
+        resp[ret] = '\0';
+
+        uint64_t rate = strtoull(&resp[1], NULL, 10);
+        if (rate == 0) {
+            break; /* *0 signals end of list */
+        }
+
+        devc->base_samplerates[devc->num_base_samplerates++] = rate;
+        sr_dbg("Base samplerate[%zu] = %" PRIu64 " Hz", idx, rate);
+    }
+
+    if (devc->num_base_samplerates == 0) {
+        sr_err("ERROR: Device reported 0 sample rates");
+        return SR_ERR;
     }
 
     return SR_OK;

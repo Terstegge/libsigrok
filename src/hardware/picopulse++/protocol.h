@@ -43,6 +43,8 @@
 /* Digits input to sr_analog_init */
 #define ANALOG_DIGITS 4
 
+#define MAX_SAMPLERATES 64
+
 SR_PRIV int send_serial_str_pp(struct sr_serial_dev_inst *serial, char *str);
 SR_PRIV int send_serial_char_pp(struct sr_serial_dev_inst *serial, char ch);
 int send_serial_w_resp_pp(struct sr_serial_dev_inst *serial, char *str,
@@ -77,8 +79,7 @@ struct dev_context {
     /* Channel groups - each analog channel is its own group */
     struct sr_channel_group **analog_groups;
     struct sr_channel_group *digital_group;
-    /* Data size in bytes for each analog channel in bytes must be 1 as only
-     * single byte samples are supported in this version */
+    /* Data size in bytes for each analog channel */
     uint8_t a_size;
     /* Offset and scale for each analog channel to covert bytes to float */
     float a_offset[MAX_ANALOG_CHANNELS];
@@ -151,7 +152,9 @@ struct dev_context {
     uint64_t max_bulk_rate;
     uint64_t max_bulk_samples;
 
-    gboolean is_open;
+    /* Base sample rates reported once from RP2040 at scan() */
+    uint64_t base_samplerates[MAX_SAMPLERATES];
+    size_t   num_base_samplerates;
 };
 
 SR_PRIV int picopulse_receive(int fd, int revents, void *cb_data);
@@ -170,5 +173,6 @@ int process_group_pp(struct sr_dev_inst *sdi, struct dev_context *devc,
 void rle_memset_pp(struct dev_context *devc, uint32_t num_slices);
 SR_PRIV int check_marker(struct dev_context *d, int *len);
 
+SR_PRIV int picopulse_get_samplerates(const struct sr_dev_inst *sdi);
 
 #endif

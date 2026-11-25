@@ -42,47 +42,6 @@ static const uint32_t scanopts[] = {
     SR_CONF_FORCE_DETECT
 };
 
-/* Sample rate can either provide a std_gvar_samplerates_steps or a
- * std_gvar_samplerates. The latter is just a long list of every supported rate.
- * For the steps, pulseview/pv/toolbars/mainbar.cpp will do a min,max,step. If
- * step is 1 then it provides a 1,2,5,10 select otherwise it allows a spin box.
- * Going with the full list because while the spin box is more flexible, it is
- * harder to read */
-static const uint64_t samplerates[] = {
-    /* --- Streaming-Bereich (5 kHz bis 15 MHz) --- */
-    SR_KHZ(5),      /* 200 MHz / 40000 */
-    SR_KHZ(10),     /* 200 MHz / 20000 */
-    SR_KHZ(20),     /* 200 MHz / 10000 */
-    SR_KHZ(25),     /* 200 MHz / 8000  */
-    SR_KHZ(40),     /* 200 MHz / 5000  */
-    SR_KHZ(50),     /* 200 MHz / 4000  (Max bei 4 ADC-Kanälen) */
-    SR_HZ(66666),   /* 200 kHz / 3     (Max bei 3 ADC-Kanälen: 66,67 kHz) */
-    SR_KHZ(80),     /* 200 MHz / 2500  */
-    SR_KHZ(100),    /* 200 MHz / 2000  (Max bei 2 ADC-Kanälen) */
-    SR_KHZ(125),    /* 200 MHz / 1600  */
-    SR_KHZ(200),    /* 200 MHz / 1000  (Max bei 1 ADC-Kanal) */
-    SR_KHZ(250),    /* 200 MHz / 800   */
-    SR_KHZ(400),    /* 200 MHz / 500   */
-    SR_KHZ(500),    /* 200 MHz / 400   */
-    SR_KHZ(800),    /* 200 MHz / 250   */
-    SR_MHZ(1),      /* 200 MHz / 200   */
-    SR_MHZ(2),      /* 200 MHz / 100   */
-    SR_MHZ(4),      /* 200 MHz / 50    */
-    SR_MHZ(5),      /* 200 MHz / 40    */
-    SR_MHZ(8),      /* 200 MHz / 25    */
-    SR_MHZ(10),     /* 200 MHz / 20    */
-    SR_KHZ(12500),  /* 200 MHz / 16    */
-    SR_MHZ(15),     /* 200 MHz / 13.33 (max. Streaming-Rate) */
-
-    /* --- High-Speed Burst-Bereich (> 15 MHz bis 200 MHz) --- */
-    SR_MHZ(20),     /* 200 MHz / 10    */
-    SR_MHZ(25),     /* 200 MHz / 8     */
-    SR_MHZ(40),     /* 200 MHz / 5     */
-    SR_MHZ(50),     /* 200 MHz / 4     */
-    SR_MHZ(100),    /* 200 MHz / 2     */
-    SR_MHZ(200),    /* 200 MHz / 1     */
-};
-
 static const uint32_t drvopts[] = {
     SR_CONF_OSCILLOSCOPE,
     SR_CONF_LOGIC_ANALYZER,
@@ -157,9 +116,9 @@ static GSList *scan(struct sr_dev_driver *di, GSList *options)
     send_serial_char_pp(serial, '*');
     g_usleep(10000);
     do {
-        sr_warn("Drain reads");
+        sr_dbg("Drain reads");
         len = serial_read_blocking(serial, buf, 32, 100);
-        sr_warn("Drain reads done");
+        sr_dbg("Drain reads done");
         if (len)
             sr_dbg("Dropping in flight serial data");
     } while (len > 0);
@@ -208,13 +167,28 @@ static GSList *scan(struct sr_dev_driver *di, GSList *options)
 
     sdi = g_malloc0(sizeof(struct sr_dev_inst));
     sdi->status = SR_ST_INACTIVE;
-    sdi->vendor = g_strdup("FH Aachen");
-    sdi->model = g_strdup("picoPULSE++");
-    sdi->version = g_strdup("00");
     sdi->conn = serial;
     sdi->driver = &picopulse_driver_info;
     sdi->inst_type = SR_INST_SERIAL;
-    sdi->serial_num = g_strdup("N/A");
+
+    /* Geräte-Metadaten (Vendor, Model, Version, Serial) vom Target abfragen */
+    num_read = send_serial_w_resp_pp(serial, "v\n", ustr, sizeof(ustr) - 1);
+    if (num_read > 1 && ustr[0] == '*') {
+        ustr[num_read] = '\0';
+        g_strstrip(ustr);
+        gchar **meta = g_strsplit(&ustr[1], ",", 4);
+        guint n = meta ? g_strv_length(meta) : 0;
+        sdi->vendor     = (n >= 1 && meta[0][0]) ? g_strdup(meta[0]) : g_strdup("FH Aachen");
+        sdi->model      = (n >= 2 && meta[1][0]) ? g_strdup(meta[1]) : g_strdup("picoPULSE++");
+        sdi->version    = (n >= 3 && meta[2][0]) ? g_strdup(meta[2]) : g_strdup("00");
+        sdi->serial_num = (n >= 4 && meta[3][0]) ? g_strdup(meta[3]) : g_strdup("N/A");
+        g_strfreev(meta);
+    } else {
+        sdi->vendor     = g_strdup("FH Aachen");
+        sdi->model      = g_strdup("picoPULSE++");
+        sdi->version    = g_strdup("00");
+        sdi->serial_num = g_strdup("N/A");
+    }
 
     if (((num_a == 0) && (num_d == 0))
         || (num_a > MAX_ANALOG_CHANNELS) || (num_d > MAX_DIGITAL_CHANNELS)
@@ -337,7 +311,11 @@ static GSList *scan(struct sr_dev_driver *di, GSList *options)
 
     if (picopulse_get_dev_cfg(sdi) != SR_OK) {
         return NULL;
-    };
+    }
+
+    if (picopulse_get_samplerates(sdi) != SR_OK) {
+        return NULL;
+    }
 
     serial_close(serial);
     return std_scan_complete(di, g_slist_append(NULL, sdi));
@@ -448,9 +426,9 @@ static void picopulse_sync_channel_limits(const struct sr_dev_inst *sdi) {
     if (!serial) return;
 
     snprintf(cmd, sizeof(cmd), "M%X,%X\n", cur_a_mask, cur_d_mask);
-    sr_warn("TX M-cmd: %s", cmd);
+    sr_dbg("TX M-cmd: %s", cmd);
     num_read = send_serial_w_resp_pp(serial, cmd, resp, sizeof(resp) - 1);
-    sr_warn("RX M-resp (%d): %s", num_read, num_read > 0 ? resp : "<empty>");
+    sr_dbg("RX M-resp (%d): %s", num_read, num_read > 0 ? resp : "<empty>");
 
     if (num_read > 1 && resp[0] == '*') {
         resp[num_read] = '\0';
@@ -503,15 +481,23 @@ static int config_list(uint32_t key, GVariant **data,
 
     switch (key) {
         case SR_CONF_SAMPLERATE: {
-            uint64_t valid_rates[ARRAY_SIZE(samplerates)];
+            uint64_t valid_rates[MAX_SAMPLERATES + 1];
             size_t count = 0;
 
-            for (size_t i = 0; i < ARRAY_SIZE(samplerates); i++) {
-                if (samplerates[i] >= devc->min_samplerate &&
-                    samplerates[i] <= devc->max_bulk_rate) {
-                    valid_rates[count++] = samplerates[i];
-                    }
+            for (size_t i = 0; i < devc->num_base_samplerates; i++) {
+                uint64_t r = devc->base_samplerates[i];
+                if (r >= devc->min_samplerate && r <= devc->max_bulk_rate) {
+                    valid_rates[count++] = r;
+                }
             }
+
+            /* Falls max_bulk_rate (z. B. USB-Bandbreitenlimit im Mixed-Modus)
+             * zwischen zwei Basis-Raten liegt, als exaktes Maximum anhängen */
+            if (devc->max_bulk_rate >= devc->min_samplerate &&
+                (count == 0 || valid_rates[count - 1] < devc->max_bulk_rate)) {
+                valid_rates[count++] = devc->max_bulk_rate;
+            }
+
             if (count == 0) {
                 valid_rates[0] = devc->min_samplerate ? devc->min_samplerate : 5000;
                 count = 1;
@@ -618,6 +604,10 @@ static int dev_acquisition_start(const struct sr_dev_inst *sdi)
     }
 
     sr_dbg("bps %d\n", devc->bytes_per_slice);
+
+    /* Sicherstellen, dass aktuelle Limits (max_stream_rate, max_bulk_samples)
+     * auch ohne vorherigen config_list()-Aufruf (z. B. bei sigrok-cli) vorliegen */
+    picopulse_sync_channel_limits(sdi);
 
     /* Depending on channel configs, rates below 5ksps are possible but such a
      * low rate can easily stream and this eliminates a lot	of special cases. */
@@ -845,26 +835,36 @@ static int dev_acquisition_stop(struct sr_dev_inst *sdi)
 
     std_session_send_df_end(sdi);
 
-    /* If we reached this while still active it is likely because the stop
-     * button was pushed in pulseview. That is generally some kind of error
-     * condition, so we don't try to check the bytenct */
     if (devc->rxstate == RX_ACTIVE)
-        sr_err("Reached dev_acquisition_stop in RX_ACTIVE");
+        sr_dbg("Reached dev_acquisition_stop in RX_ACTIVE");
 
     if (devc->rxstate != RX_IDLE) {
-        sr_err("Sending plus to stop device stream");
+        sr_dbg("Sending plus to stop device stream");
         send_serial_char_pp(serial, '+');
     }
 
     /* In case we get calls to receive force it to exit */
     devc->rxstate = RX_IDLE;
 
-    /* Drain data from device so that it doesn't confuse subsequent commands */
+    /* Drain trailing device bytes and verify final $<byte_cnt>+ token if present */
     do {
         len = serial_read_blocking(serial, devc->buffer,
-                                   devc->serial_buffer_size, 100);
-        if (len)
-            sr_err("Dropping %d device bytes", len);
+                                   devc->serial_buffer_size - 1, 20);
+        if (len > 0) {
+            devc->buffer[len] = '\0';
+            char *dollar = memchr(devc->buffer, '$', len);
+            if (dollar) {
+                uint64_t rxbytecnt = strtoull(dollar + 1, NULL, 10);
+                sr_dbg("Final device byte_cnt %" PRIu64 " (host counted %" PRIu64 ")",
+                       rxbytecnt, devc->byte_cnt);
+                if (rxbytecnt != devc->byte_cnt)
+                    sr_err("ERROR: received %" PRIu64 " and counted %" PRIu64 " bytecnts "
+                           "don't match, data may be lost",
+                           rxbytecnt, devc->byte_cnt);
+            } else {
+                sr_dbg("Drained %d trailing device bytes", len);
+            }
+        }
     } while (len > 0);
 
     if (devc->buffer) {
